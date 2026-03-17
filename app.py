@@ -1,14 +1,14 @@
 import streamlit as st
-import time
 import os
-import yt_dlp
+import time
 import whisper
 from nltk.tokenize import sent_tokenize
 from transformers import pipeline
+import yt_dlp
 
-# Título
-st.title(" Clasificador de vídeos deportivos")
-st.write("Introduce la URL de YouTube y ejecuta el pipeline para obtener transcripción, resumen y clasificación de deportes.")
+st.set_page_config(page_title=" Clasificador de Vídeos Deportivos", layout="wide")
+st.title(" Clasificador de Vídeos Deportivos")
+st.write("Introduce la URL de YouTube o sube un archivo de audio MP3 generado desde Colab.")
 
 # Lista oficial de deportes
 SPORTS_CATEGORIES = [
@@ -16,83 +16,50 @@ SPORTS_CATEGORIES = [
     "Natación", "Rugby", "Deportes de invierno", "Boxeo / Artes marciales", "Vela"
 ]
 
-# Input de URL
+# Input: URL de YouTube
+youtube_url = st.text_input("Introduce URL de YouTube (opcional)")
 
-youtube_url = st.text_input("Introduce la URL de YouTube")
+# Input: archivo de audio
+audio_file = st.file_uploader("O sube un audio MP3 desde Colab (opcional)", type=["mp3"])
 
-
-# Función pipeline
-
-def pipeline_func(url):
+# Función para ejecutar el pipeline completo
+def pipeline_func(audio_filename):
     start_total_time = time.time()
     output = {}
 
-    
-    # Flujo 0 – Inicialización
-    
-    output['url'] = url
-    output['sports_categories'] = SPORTS_CATEGORIES
-
-    # Obtener duración aproximada usando yt-dlp
-    ydl_opts_info = {'quiet': True, 'no_warnings': True}
-    with yt_dlp.YoutubeDL(ydl_opts_info) as ydl:
-        info_dict = ydl.extract_info(url, download=False)
-        duration = info_dict.get('duration', 0)  # en segundos
-        output['duration'] = duration
-
-    
-    # Flujo 1 – Descarga de audio temporal
-    
-    audio_filename = "temp_audio.mp3"
-    ydl_opts_audio = {
-        'format': 'bestaudio/best',
-        'postprocessors': [{
-            'key': 'FFmpegExtractAudio',
-            'preferredcodec': 'mp3',
-            'preferredquality': '192',
-        }],
-        'outtmpl': audio_filename,
-        'noplaylist': True,
-        'quiet': True,
-        'no_warnings': True
-    }
-    with yt_dlp.YoutubeDL(ydl_opts_audio) as ydl:
-        ydl.download([url])
-    output['audio_filename'] = audio_filename
-
-    
+    # -------------------------------
     # Flujo 2 – Transcripción
-    
-    start_transcription_time = time.time()
-    model = whisper.load_model("base")  # Cambiar a 'tiny' si falla por memoria
+    # -------------------------------
+    start_trans_time = time.time()
+    model = whisper.load_model("base")  # Cambia a 'tiny' si RAM limitada
     result = model.transcribe(audio_filename, language="es")
-    transcription_text = result["text"]
-    transcription_time = time.time() - start_transcription_time
-    output['transcription'] = transcription_text
-    output['transcription_time'] = transcription_time
+    transcription = result["text"]
+    trans_time = time.time() - start_trans_time
+    output['transcription'] = transcription
+    output['trans_time'] = trans_time
 
-  
+    # -------------------------------
     # Flujo 3 – Resumen
-   
-    if len(transcription_text.split()) < 50:
-        summary = transcription_text
+    # -------------------------------
+    if len(transcription.split()) < 50:
+        summary = transcription
     else:
-        sentences = sent_tokenize(transcription_text)
-        summary = ' '.join(sentences[:3])
+        sentences = sent_tokenize(transcription)
+        summary = " ".join(sentences[:3])
     output['summary'] = summary
 
-   
-    # Flujo 4 – Clasificación Zero-Shot
-   
+    # -------------------------------
+    # Flujo 4 – Clasificación
+    # -------------------------------
     classifier = pipeline("zero-shot-classification", model="Recognai/bert-base-spanish-wwm-cased-xnli")
     result_cls = classifier(summary, candidate_labels=SPORTS_CATEGORIES)
     output['predicted_sport'] = result_cls['labels'][0]
     output['confidence'] = result_cls['scores'][0]*100
     output['top3'] = [(result_cls['labels'][i], result_cls['scores'][i]*100) for i in range(min(3,len(result_cls['labels'])))]
 
-   
-    # Tiempo total y entorno
-   
+    # -------------------------------
+    # Tiempos y entorno
+    # -------------------------------
     total_time = time.time() - start_total_time
     output['total_time'] = total_time
     output['environment'] = {
@@ -106,46 +73,64 @@ def pipeline_func(url):
 
     return output
 
+# ===============================
+# Procesar cuando hay URL o audio
+# ===============================
+if st.button("Ejecutar pipeline"):
+    audio_filename = None
 
-# Botón ejecutar
+    # Intentar descargar de YouTube si hay URL
+    if youtube_url:
+        try:
+            audio_filename = "temp_audio.mp3"
+            ydl_opts = {
+                'format': 'bestaudio/best',
+                'postprocessors': [{
+                    'key': 'FFmpegExtractAudio',
+                    'preferredcodec': 'mp3',
+                    'preferredquality': '192',
+                }],
+                'outtmpl': audio_filename,
+                'noplaylist': True,
+                'quiet': True,
+                'no_warnings': True
+            }
+            with yt_dlp.YoutubeDL(ydl_opts) as ydl:
+                ydl.download([youtube_url])
+            st.success(" Audio descargado de YouTube correctamente")
+        except Exception as e:
+            st.warning(f"No se pudo descargar el vídeo: {e}")
+            audio_filename = None
 
-if st.button("Procesar vídeo"):
-    if youtube_url == "":
-        st.error(" Introduce una URL válida")
+    # Si no hay URL válida o falla, usar archivo subido
+    if audio_filename is None and audio_file is not None:
+        audio_filename = "temp_audio.mp3"
+        with open(audio_filename, "wb") as f:
+            f.write(audio_file.read())
+        st.success(f" Archivo {audio_file.name} subido correctamente")
+
+    # Error si no hay audio
+    if audio_filename is None:
+        st.error("  No hay audio para procesar. Introduce URL válida o sube un archivo MP3.")
     else:
-        with st.spinner("Ejecutando pipeline..."):
-            results = pipeline_func(youtube_url)
+        with st.spinner("Procesando pipeline..."):
+            results = pipeline_func(audio_filename)
 
-   
         # Mostrar resultados
-        
-        st.subheader(" Flujo 0 – Inicialización")
-        st.write(f"URL: {results['url']}")
-        st.write(f"Duración aproximada: {results['duration']} segundos")
-        st.write("Categorías de deportes oficiales:")
-        for cat in results['sports_categories']:
-            st.write(f"- {cat}")
+        st.subheader(" Transcripción")
+        st.write(results['transcription'][:200] + "..." if len(results['transcription'])>200 else results['transcription'])
 
-        st.subheader(" Flujo 1 – Descarga de audio")
-        st.write("Paso 1 completado: Archivo generado temporalmente (no se guarda)")
-
-        st.subheader(" Flujo 2 – Transcripción")
-        st.write("Paso 2 completado. Primeros 200 caracteres:")
-        st.write(results['transcription'][:200])
-
-        st.subheader(" Flujo 3 – Resumen")
-        st.write("Paso 3 completado: Resumen generado")
+        st.subheader(" Resumen")
         st.write(results['summary'])
 
-        st.subheader(" Flujo 4 – Clasificación")
-        st.write(f"Paso 4 completado")
+        st.subheader(" Clasificación")
         st.write(f"Deporte predicho: {results['predicted_sport']}")
         st.write(f"Confianza: {results['confidence']:.2f}%")
         st.write("Top 3:")
         for sport, score in results['top3']:
             st.write(f"- {sport}: {score:.2f}%")
 
-        st.subheader(" Detalles de rendimiento y entorno")
-        st.write(f"Tiempo de transcripción: {results['transcription_time']:.2f} segundos")
-        st.write(f"Tiempo total del pipeline: {results['total_time']:.2f} segundos")
-        st.write(f"Modelos usados: {results['environment']}")
+        st.subheader(" Rendimiento y entorno")
+        st.write(f"Tiempo transcripción: {results['trans_time']:.2f} s")
+        st.write(f"Tiempo total pipeline: {results['total_time']:.2f} s")
+        st.write("Modelos usados:", results['environment'])
