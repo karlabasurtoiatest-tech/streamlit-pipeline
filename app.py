@@ -16,22 +16,23 @@ SPORTS_CATEGORIES = [
     "Natación", "Rugby", "Deportes de invierno", "Boxeo / Artes marciales", "Vela"
 ]
 
-# Input: URL de YouTube
+# Inputs
 youtube_url = st.text_input("Introduce URL de YouTube (opcional)")
-
-# Input: archivo de audio
 audio_file = st.file_uploader("O sube un audio MP3 desde Colab (opcional)", type=["mp3"])
 
-# Función para ejecutar el pipeline completo
+# Nombre fijo para audio temporal
+AUDIO_TEMP = "temp_audio.mp3"
+
+# Función del pipeline
 def pipeline_func(audio_filename):
     start_total_time = time.time()
     output = {}
 
     # -------------------------------
-    # Flujo 2 – Transcripción
+    # Transcripción
     # -------------------------------
     start_trans_time = time.time()
-    model = whisper.load_model("base")  # Cambia a 'tiny' si RAM limitada
+    model = whisper.load_model("base")
     result = model.transcribe(audio_filename, language="es")
     transcription = result["text"]
     trans_time = time.time() - start_trans_time
@@ -39,7 +40,7 @@ def pipeline_func(audio_filename):
     output['trans_time'] = trans_time
 
     # -------------------------------
-    # Flujo 3 – Resumen
+    # Resumen
     # -------------------------------
     if len(transcription.split()) < 50:
         summary = transcription
@@ -49,7 +50,7 @@ def pipeline_func(audio_filename):
     output['summary'] = summary
 
     # -------------------------------
-    # Flujo 4 – Clasificación
+    # Clasificación
     # -------------------------------
     classifier = pipeline("zero-shot-classification", model="Recognai/bert-base-spanish-wwm-cased-xnli")
     result_cls = classifier(summary, candidate_labels=SPORTS_CATEGORIES)
@@ -67,22 +68,21 @@ def pipeline_func(audio_filename):
         'Classification_model': "Recognai/bert-base-spanish-wwm-cased-xnli"
     }
 
-    # Eliminar audio temporal
+    # Limpiar audio temporal
     if os.path.exists(audio_filename):
         os.remove(audio_filename)
 
     return output
 
 # ===============================
-# Procesar cuando hay URL o audio
+# Ejecutar pipeline
 # ===============================
 if st.button("Ejecutar pipeline"):
     audio_filename = None
 
-    # Intentar descargar de YouTube si hay URL
+    #  Intentar descargar desde YouTube si hay URL
     if youtube_url:
         try:
-            audio_filename = "temp_audio.mp3"
             ydl_opts = {
                 'format': 'bestaudio/best',
                 'postprocessors': [{
@@ -90,7 +90,7 @@ if st.button("Ejecutar pipeline"):
                     'preferredcodec': 'mp3',
                     'preferredquality': '192',
                 }],
-                'outtmpl': audio_filename,
+                'outtmpl': AUDIO_TEMP,
                 'noplaylist': True,
                 'quiet': True,
                 'no_warnings': True
@@ -98,20 +98,21 @@ if st.button("Ejecutar pipeline"):
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 ydl.download([youtube_url])
             st.success(" Audio descargado de YouTube correctamente")
+            audio_filename = AUDIO_TEMP
         except Exception as e:
-            st.warning(f"No se pudo descargar el vídeo: {e}")
+            st.warning(f" No se pudo descargar el vídeo: {e}")
             audio_filename = None
 
-    # Si no hay URL válida o falla, usar archivo subido
-    if audio_filename is None and audio_file is not None:
-        audio_filename = "temp_audio.mp3"
+    #  Si hay audio subido, usarlo
+    if audio_file is not None:
+        audio_filename = AUDIO_TEMP
         with open(audio_filename, "wb") as f:
             f.write(audio_file.read())
         st.success(f" Archivo {audio_file.name} subido correctamente")
 
-    # Error si no hay audio
-    if audio_filename is None:
-        st.error("  No hay audio para procesar. Introduce URL válida o sube un archivo MP3.")
+    #  Validar que hay audio
+    if audio_filename is None or not os.path.exists(audio_filename):
+        st.error(" No hay audio para procesar. Introduce una URL válida o sube un archivo MP3.")
     else:
         with st.spinner("Procesando pipeline..."):
             results = pipeline_func(audio_filename)
