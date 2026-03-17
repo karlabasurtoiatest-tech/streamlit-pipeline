@@ -1,11 +1,35 @@
 import streamlit as st
 import os
 import time
-import whisper
+
+# -------------------------------
+# NLTK: descargar recursos necesarios
+# -------------------------------
+import nltk
+try:
+    nltk.data.find('tokenizers/punkt')
+except LookupError:
+    nltk.download('punkt')
+
+try:
+    nltk.data.find('corpora/stopwords')
+except LookupError:
+    nltk.download('stopwords')
+
 from nltk.tokenize import sent_tokenize
+from nltk.corpus import stopwords
+stop_words = set(stopwords.words('spanish'))
+
+# -------------------------------
+# Otros imports
+# -------------------------------
+import whisper
 from transformers import pipeline
 import yt_dlp
 
+# -------------------------------
+# Configuración de página
+# -------------------------------
 st.set_page_config(page_title=" Clasificador de Vídeos Deportivos", layout="wide")
 st.title(" Clasificador de Vídeos Deportivos")
 st.write("Introduce la URL de YouTube o sube un archivo de audio MP3 generado desde Colab.")
@@ -23,14 +47,14 @@ audio_file = st.file_uploader("O sube un audio MP3 desde Colab (opcional)", type
 # Nombre fijo para audio temporal
 AUDIO_TEMP = "temp_audio.mp3"
 
-# Función del pipeline
+# -------------------------------
+# Función pipeline
+# -------------------------------
 def pipeline_func(audio_filename):
     start_total_time = time.time()
     output = {}
 
-    # -------------------------------
-    # Transcripción
-    # -------------------------------
+    #  Transcripción
     start_trans_time = time.time()
     model = whisper.load_model("base")
     result = model.transcribe(audio_filename, language="es")
@@ -39,28 +63,24 @@ def pipeline_func(audio_filename):
     output['transcription'] = transcription
     output['trans_time'] = trans_time
 
-    # -------------------------------
-    # Resumen
-    # -------------------------------
-    if len(transcription.split()) < 50:
-        summary = transcription
+    #  Resumen (limpiando stopwords)
+    words = [w for w in transcription.split() if w.lower() not in stop_words]
+    clean_text = " ".join(words)
+    if len(clean_text.split()) < 50:
+        summary = clean_text
     else:
-        sentences = sent_tokenize(transcription)
+        sentences = sent_tokenize(clean_text)
         summary = " ".join(sentences[:3])
     output['summary'] = summary
 
-    # -------------------------------
-    # Clasificación
-    # -------------------------------
+    #  Clasificación Zero-Shot
     classifier = pipeline("zero-shot-classification", model="Recognai/bert-base-spanish-wwm-cased-xnli")
     result_cls = classifier(summary, candidate_labels=SPORTS_CATEGORIES)
     output['predicted_sport'] = result_cls['labels'][0]
     output['confidence'] = result_cls['scores'][0]*100
     output['top3'] = [(result_cls['labels'][i], result_cls['scores'][i]*100) for i in range(min(3,len(result_cls['labels'])))]
 
-    # -------------------------------
-    # Tiempos y entorno
-    # -------------------------------
+    #  Tiempos y entorno
     total_time = time.time() - start_total_time
     output['total_time'] = total_time
     output['environment'] = {
@@ -75,7 +95,7 @@ def pipeline_func(audio_filename):
     return output
 
 # ===============================
-# Ejecutar pipeline
+# Ejecutar pipeline al presionar botón
 # ===============================
 if st.button("Ejecutar pipeline"):
     audio_filename = None
